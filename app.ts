@@ -161,11 +161,30 @@ function writePack(objects: readonly GitObj[]): Buffer {
   parts.push(header);
   for (const obj of objects) {
     parts.push(writePackObjectHeader(obj.type, obj.data.length));
-    parts.push(deflateSync(obj.data));
+    parts.push(deflateSync(obj.data, { level: 1 }));
   }
   const body = Buffer.concat(parts);
   const trailer = createHash('sha1').update(body).digest();
   return Buffer.concat([body, trailer]);
+}
+
+// Identical fetches repeat constantly (a clone burst asks for the same closure fifty times):
+// cache the serialized pack per object set instead of re-deflating it for every request.
+const packCache = new Map<string, Buffer>();
+let packCacheBytes = 0;
+const PACK_CACHE_MAX_BYTES = 128 * 1024 * 1024;
+
+function cachedPack(objects: readonly GitObj[], ids: readonly string[]): Buffer {
+  if (objects.length === 0) return writePack(objects);
+  const key = ids.join(' ');
+  const hit = packCache.get(key);
+  if (hit) return hit;
+  const pack = writePack(objects);
+  if (packCacheBytes + pack.length <= PACK_CACHE_MAX_BYTES) {
+    packCache.set(key, pack);
+    packCacheBytes += pack.length;
+  }
+  return pack;
 }
 
 function inflateAt(buffer: Buffer, offset: number): { data: Buffer; next: number } {
@@ -1661,6 +1680,7 @@ function lsRefsResponse(repo: Repo, args: Buffer[], prefixes: string[]): Buffer 
 
 interface FetchPlan {
   objects: GitObj[];
+  ids: string[];
   shallow: string[];
   unshallow: string[];
 }
@@ -1792,7 +1812,7 @@ function planFetch(repo: Repo, wants: string[], haves: string[], clientShallow: 
       if (obj && obj.type === 'tag' && includedCommits.has(parseTagTarget(obj.data).object)) addObject(oid);
     }
   }
-  return { objects: [...send.values()], shallow: [...shallowBoundary], unshallow };
+  return { objects: [...send.values()], ids: [...send.keys()], shallow: [...shallowBoundary], unshallow };
 }
 
 function sidebandChunks(pack: Buffer): Buffer[] {
@@ -1847,7 +1867,7 @@ function handleUploadPack(res: ServerResponse, repo: Repo, raw: Buffer, version2
         else if (line.startsWith('deepen ')) depth = Number(line.slice(7).trim());
       }
       const plan = planFetch(repo, wants, haves, clientShallow, depth);
-      const pack = writePack(plan.objects);
+      const pack = cachedPack(plan.objects, plan.ids);
       const parts: Buffer[] = [];
       if (haves.length > 0) {
         parts.push(pktLine('acknowledgments\n'), pktLine('NAK\n'), PKT_FLUSH);
@@ -1886,7 +1906,7 @@ function handleUploadPack(res: ServerResponse, repo: Repo, raw: Buffer, version2
     }
   }
   const plan = planFetch(repo, wants, haves, clientShallow, depth);
-  const pack = writePack(plan.objects);
+  const pack = cachedPack(plan.objects, plan.ids);
   const parts: Buffer[] = [pktLine('NAK\n')];
   for (const oid of plan.shallow) parts.push(pktLine(`shallow ${oid}\n`));
   for (const oid of plan.unshallow) parts.push(pktLine(`unshallow ${oid}\n`));
