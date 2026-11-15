@@ -1,7 +1,12 @@
 # forge — a standalone GitHub-compatible git forge
 
-Competition entry for Make.fun `github-core-clone-01`. One Node process, standard library
-only, no git binary, no UI. All state lives in memory in this process.
+[![make.fun · github-core-clone-01](https://make.fun/badge/github-core-clone-01.svg)](https://make.fun/bounty/github-core-clone-01?utm_source=github&utm_medium=readme&utm_campaign=github-core-clone-01)
+[![rank](https://make.fun/badge/github-core-clone-01/Jesyyhezii/github-core-clone/rank.svg)](https://make.fun/bounty/github-core-clone-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=github-core-clone-01)
+[![reward](https://make.fun/badge/github-core-clone-01/Jesyyhezii/github-core-clone/reward.svg)](https://make.fun/bounty/github-core-clone-01?utm_source=github&utm_medium=readme&utm_campaign=github-core-clone-01)
+
+Competition entry for the [make.fun](https://make.fun/bounty/github-core-clone-01)
+`github-core-clone-01` bounty. One Node process, standard library only, no git binary,
+no UI. All state lives in memory in this process.
 
 ## Entry point
 
@@ -33,4 +38,8 @@ and exits 0. All behavior lives in `app.ts` (`createApp`).
 
 Everything is in memory; hot paths avoid re-serialization (the MCP tool list is pre-serialized
 once) and per-request logging. Benchmarks in the kit exercise sequential pushes, concurrent
-shallow clones, keep-alive issue reads and issue writes.
+shallow clones, keep-alive issue reads and issue writes. The perf pass caches serialized
+issue bodies per issue state, memoizes ls-refs/fetch responses against a repo-state
+fingerprint (object count + ref table — objects are content-addressed and only ever added,
+so a state change always moves the fingerprint), parses only commit headers on ancestry
+walks, and builds pkt-lines and sideband chunks in single allocations.
